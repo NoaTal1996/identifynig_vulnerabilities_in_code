@@ -116,7 +116,15 @@ def main():
     # 7. Train model
     print("Training model...")
     trainer.train()
-    
+
+    # Save the best model (load_best_model_at_end=True) and tokenizer to the
+    # run root, so eval.py can load --model_path <run_output_dir> directly
+    # instead of hunting for a checkpoint-* folder.
+    trainer.save_model(run_output_dir)
+    tokenizer.save_pretrained(run_output_dir)
+    print(f"Saved best model and tokenizer to {run_output_dir}")
+
+
     # 8. Evaluate on test set
     print("Evaluating model on test set...")
     test_results = trainer.evaluate(tokenized_datasets['test'])

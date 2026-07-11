@@ -2,6 +2,52 @@ import re
 import pandas as pd
 from datasets import Dataset, DatasetDict, load_dataset
 
+def _strip_comments_and_strings(code):
+    """
+    Single pass over C source with an explicit lexer state, so that
+    comment markers inside strings ("http://...") and quotes inside
+    comments (/* "x" */) are never confused:
+    - // line comments and /* block comments */ -> replaced by one space
+    - "string literals" -> kept as empty "" (contents blanked)
+    - 'char literals' -> kept as-is (no leakage; part of code logic)
+    """
+    out = []
+    i, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        nxt = code[i + 1] if i + 1 < n else ''
+        if c == '/' and nxt == '/':
+            # line comment: skip to end of line (keep the newline)
+            while i < n and code[i] != '\n':
+                i += 1
+            out.append(' ')
+        elif c == '/' and nxt == '*':
+            # block comment: skip to closing */
+            i += 2
+            while i + 1 < n and not (code[i] == '*' and code[i + 1] == '/'):
+                i += 1
+            i = min(i + 2, n)
+            out.append(' ')
+        elif c == '"':
+            # string literal: skip contents (honoring \escapes), keep empty quotes
+            i += 1
+            while i < n and code[i] != '"':
+                i += 2 if code[i] == '\\' else 1
+            i += 1
+            out.append('""')
+        elif c == "'":
+            # char literal: copy verbatim (honoring \escapes)
+            j = i + 1
+            while j < n and code[j] != "'":
+                j += 2 if code[j] == '\\' else 1
+            j = min(j + 1, n)
+            out.append(code[i:j])
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out)
+
 def clean_source(code, fun_name=None, juliet=False):
     """
     Removes label leakage from C source code:
@@ -15,12 +61,10 @@ def clean_source(code, fun_name=None, juliet=False):
     The LLVM IR datasets are already anonymized; source must be equally blind
     or the source-vs-IR comparison is unfair.
     """
-    # 1. Remove block comments (non-greedy, across lines)
-    code = re.sub(r'/\*.*?\*/', ' ', code, flags=re.DOTALL)
-    # 2. Remove line comments
-    code = re.sub(r'//[^\n]*', ' ', code)
-    # 3. Blank out string literal contents (keep the quotes so code stays valid-looking)
-    code = re.sub(r'"(?:\\.|[^"\\])*"', '""', code)
+    # 1-3. Single-pass lexical cleaner: removes comments and blanks string
+    # contents while correctly handling their interactions (e.g. "http://x"
+    # is a string, not a comment; /* "quoted" */ is a comment, not a string).
+    code = _strip_comments_and_strings(code)
     # 4. Rename the function's own name everywhere
     if fun_name:
         code = re.sub(r'\b' + re.escape(fun_name) + r'\b', 'func', code)
