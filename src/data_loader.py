@@ -2,6 +2,37 @@ import re
 import pandas as pd
 from datasets import Dataset, DatasetDict, load_dataset
 
+def clean_source(code, fun_name=None, juliet=False):
+    """
+    Removes label leakage from C source code:
+    1. strips /* block */ and // line comments
+    2. strips string literal contents (Juliet prints giveaways like "Calling bad()...")
+    3. renames the function itself to 'func'
+    4. (Juliet only) renames giveaway identifiers: CWE..., ...Bad..., ...Good...
+       These are dataset-construction artifacts correlated with the label.
+       Real-world code may legitimately contain words like BAD (e.g. #define BAD 255),
+       which is natural content, not leakage — so the rule is off for realvul.
+    The LLVM IR datasets are already anonymized; source must be equally blind
+    or the source-vs-IR comparison is unfair.
+    """
+    # 1. Remove block comments (non-greedy, across lines)
+    code = re.sub(r'/\*.*?\*/', ' ', code, flags=re.DOTALL)
+    # 2. Remove line comments
+    code = re.sub(r'//[^\n]*', ' ', code)
+    # 3. Blank out string literal contents (keep the quotes so code stays valid-looking)
+    code = re.sub(r'"(?:\\.|[^"\\])*"', '""', code)
+    # 4. Rename the function's own name everywhere
+    if fun_name:
+        code = re.sub(r'\b' + re.escape(fun_name) + r'\b', 'func', code)
+    # 5. Juliet-specific: identifiers that contain the answer, anywhere in the word
+    if juliet:
+        code = re.sub(r'\b[A-Za-z_]*CWE\d+[A-Za-z0-9_]*\b', 'helper', code)
+        code = re.sub(r'\b[A-Za-z0-9_]*(?:[Bb]ad|[Gg]ood)[A-Za-z0-9_]*\b', 'helper', code)
+    # 6. Collapse the whitespace holes we created
+    code = re.sub(r'[ \t]+', ' ', code)
+    code = re.sub(r'\n\s*\n+', '\n', code)
+    return code.strip()
+
 def extract_function_body(code_str, func_name):
     """
     Extracts the function body of `func_name` from C source code `code_str`
@@ -84,7 +115,7 @@ def load_aligned_juliet(toy=False):
             aligned_rows.append({
                 'file': row['file'],
                 'fun_name': fun_name,
-                'source_code': c_source,
+                'source_code': clean_source(c_source, fun_name, juliet=True),
                 'llvm_ir': row['llvm_ir_function'],
                 'label': label
             })
@@ -128,7 +159,7 @@ def load_aligned_realvul(toy=False):
             
             aligned_rows.append({
                 'fun_name': fun_name,
-                'source_code': c_row['code'],
+                'source_code': clean_source(c_row['code'], fun_name),
                 'llvm_ir': row['llvm_ir_function'],
                 'label': label
             })
