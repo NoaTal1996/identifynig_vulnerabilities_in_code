@@ -2,6 +2,8 @@
 
 > **Status (2026-07-10, v3):** Agreed project direction, updated after deep literature verification, dataset inspection, and token-length measurements. Written in simple English so all partners can read it easily.
 >
+> **Repository:** https://github.com/Artur-Mo/identifying_vulnerabilities_in_code (public; see Section 11 for workflow)
+>
 > **Time budget:** ~3 weeks.
 
 ---
@@ -193,10 +195,19 @@ Prior evidence on H1/H2 conflicts — VulDeeLocator (2020): IR better; SEI/CMU (
 
 ## 11. Process rules
 
-- **Local Mac = development only** (toy mode: `bash run_toy.sh`). No full training locally.
+- **THE repository (single source of truth): https://github.com/Artur-Mo/identifying_vulnerabilities_in_code** (public — no tokens needed anywhere). The old private repo under NoaTal1996 is retired; do not push there.
+- Workflow: each partner works on their own branch (`Art`, `Sharon`, `Noa`), merges to `main` via PR when a piece is verified. Kaggle always clones `main`.
+- **Kaggle setup (works as-is, verified 2026-07-10):** notebook Session options → GPU T4 x2, Internet On. Then:
+  ```python
+  !git clone --branch main https://github.com/Artur-Mo/identifying_vulnerabilities_in_code.git proj
+  %cd proj
+  !bash run_toy.sh   # sanity check; real runs: python src/train.py --dataset ... --rep ...
+  ```
+- **Local Mac = development only** (toy mode: `bash run_toy.sh`; note: no PyTorch locally, loader-level checks only). No full training locally.
 - **Kaggle = all heavy compute** (training, Qwen inference).
 - **One shared results file**: every finished run adds one row (model, exam, scores). Single source of truth.
 - Suggested split: one partner owns runs + results table; other owns paper text + related work. Swap for review.
+- Known environment fact: Kaggle's `transformers` is v4.46+ — `eval_strategy` (not `evaluation_strategy`), `processing_class` (not `tokenizer=`) in Trainer. Already fixed in the code.
 
 ## 12. Known risks and honest limitations
 
