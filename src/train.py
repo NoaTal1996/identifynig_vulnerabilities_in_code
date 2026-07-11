@@ -93,7 +93,7 @@ def main():
         per_device_eval_batch_size=args.batch_size,
         num_train_epochs=args.epochs,
         weight_decay=0.01,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="f1",
@@ -108,7 +108,7 @@ def main():
         args=training_args,
         train_dataset=tokenized_datasets['train'],
         eval_dataset=tokenized_datasets['validation'],
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
         compute_metrics=compute_metrics,
     )

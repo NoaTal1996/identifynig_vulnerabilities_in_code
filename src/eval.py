@@ -89,7 +89,7 @@ def main():
         model=model,
         args=eval_args,
         eval_dataset=tokenized_test,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
         compute_metrics=compute_metrics,
     )
