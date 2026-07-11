@@ -2,6 +2,81 @@ import re
 import pandas as pd
 from datasets import Dataset, DatasetDict, load_dataset
 
+def _strip_comments_and_strings(code):
+    """
+    Single pass over C source with an explicit lexer state, so that
+    comment markers inside strings ("http://...") and quotes inside
+    comments (/* "x" */) are never confused:
+    - // line comments and /* block comments */ -> replaced by one space
+    - "string literals" -> kept as empty "" (contents blanked)
+    - 'char literals' -> kept as-is (no leakage; part of code logic)
+    """
+    out = []
+    i, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        nxt = code[i + 1] if i + 1 < n else ''
+        if c == '/' and nxt == '/':
+            # line comment: skip to end of line (keep the newline)
+            while i < n and code[i] != '\n':
+                i += 1
+            out.append(' ')
+        elif c == '/' and nxt == '*':
+            # block comment: skip to closing */
+            i += 2
+            while i + 1 < n and not (code[i] == '*' and code[i + 1] == '/'):
+                i += 1
+            i = min(i + 2, n)
+            out.append(' ')
+        elif c == '"':
+            # string literal: skip contents (honoring \escapes), keep empty quotes
+            i += 1
+            while i < n and code[i] != '"':
+                i += 2 if code[i] == '\\' else 1
+            i += 1
+            out.append('""')
+        elif c == "'":
+            # char literal: copy verbatim (honoring \escapes)
+            j = i + 1
+            while j < n and code[j] != "'":
+                j += 2 if code[j] == '\\' else 1
+            j = min(j + 1, n)
+            out.append(code[i:j])
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out)
+
+def clean_source(code, fun_name=None, juliet=False):
+    """
+    Removes label leakage from C source code:
+    1. strips /* block */ and // line comments
+    2. strips string literal contents (Juliet prints giveaways like "Calling bad()...")
+    3. renames the function itself to 'func'
+    4. (Juliet only) renames giveaway identifiers: CWE..., ...Bad..., ...Good...
+       These are dataset-construction artifacts correlated with the label.
+       Real-world code may legitimately contain words like BAD (e.g. #define BAD 255),
+       which is natural content, not leakage — so the rule is off for realvul.
+    The LLVM IR datasets are already anonymized; source must be equally blind
+    or the source-vs-IR comparison is unfair.
+    """
+    # 1-3. Single-pass lexical cleaner: removes comments and blanks string
+    # contents while correctly handling their interactions (e.g. "http://x"
+    # is a string, not a comment; /* "quoted" */ is a comment, not a string).
+    code = _strip_comments_and_strings(code)
+    # 4. Rename the function's own name everywhere
+    if fun_name:
+        code = re.sub(r'\b' + re.escape(fun_name) + r'\b', 'func', code)
+    # 5. Juliet-specific: identifiers that contain the answer, anywhere in the word
+    if juliet:
+        code = re.sub(r'\b[A-Za-z_]*CWE\d+[A-Za-z0-9_]*\b', 'helper', code)
+        code = re.sub(r'\b[A-Za-z0-9_]*(?:[Bb]ad|[Gg]ood)[A-Za-z0-9_]*\b', 'helper', code)
+    # 6. Collapse the whitespace holes we created
+    code = re.sub(r'[ \t]+', ' ', code)
+    code = re.sub(r'\n\s*\n+', '\n', code)
+    return code.strip()
+
 def extract_function_body(code_str, func_name):
     """
     Extracts the function body of `func_name` from C source code `code_str`
@@ -84,7 +159,7 @@ def load_aligned_juliet(toy=False):
             aligned_rows.append({
                 'file': row['file'],
                 'fun_name': fun_name,
-                'source_code': c_source,
+                'source_code': clean_source(c_source, fun_name, juliet=True),
                 'llvm_ir': row['llvm_ir_function'],
                 'label': label
             })
@@ -128,7 +203,7 @@ def load_aligned_realvul(toy=False):
             
             aligned_rows.append({
                 'fun_name': fun_name,
-                'source_code': c_row['code'],
+                'source_code': clean_source(c_row['code'], fun_name),
                 'llvm_ir': row['llvm_ir_function'],
                 'label': label
             })

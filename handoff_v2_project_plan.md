@@ -21,7 +21,7 @@ We train models to find security bugs in C code. We compare **two forms of the s
 A multi-source, adversarially-verified literature check (through mid-2026) gave these verdicts:
 
 **Claim A — "source vs. IR comparison" alone: NOT novel. Do not claim it.**
-- **VulDeeLocator** (arXiv 2001.02350, 2020): compared source-based vs. IR-based inputs for C bug detection. IR won (F1 96.9% vs 90.2%). Used two test sets split by data origin, BUT training always mixed both origins — never zero-shot transfer. Old BLSTM model, sliced inputs.
+- **VulDeeLocator** (arXiv 2001.02350, 2020): compared source-based vs. IR-based inputs for C bug detection. IR won (roughly 90.2 → 97.2 F1 in the direct comparison table — quote these numbers carefully; a 96.9 figure appears in a related setting). Used two test sets split by data origin, BUT training always mixed both origins — never zero-shot transfer. Old BLSTM model, sliced inputs.
 - **SEI/CMU report** (2022, AD1178536): classic ML on LLVM IR features vs. C source features, synthetic + natural data. Found IR did **not** help.
 - The conflict (VulDeeLocator: IR wins; SEI/CMU: IR doesn't help) is our best motivation — the question is genuinely open.
 
@@ -68,16 +68,16 @@ We always work on the **aligned intersection**: the same function in both forms 
 - CompRealVul: **5,680 of 8,141 vulnerable samples have no CWE label** (`-1`). Binary labels are complete; per-CWE analysis on real data is limited to ~2,400 labeled samples. Top labeled CWEs: 119/787/125 (buffer), 476 (NULL deref), 416 (use-after-free).
 - "CompRealVul" = **Comp**ilable **Real**-world **Vul**nerabilities. CCompote is the publishing group (they also published Juliet_LLVM) — say "CompRealVul", not "the Compote dataset".
 
-**Token-length measurement (800 random samples each, CodeBERT tokenizer):**
+**Token-length measurement (800 random samples each, CodeBERT tokenizer, measured on CLEANED aligned data, 2026-07-10):**
 
 | Data | Median tokens | % exceeding 512 |
 |---|:---:|:---:|
-| Juliet source | 285 | 20.4% |
-| Juliet IR | 685 | **73.5%** |
-| CompRealVul source | 686 | 65.2% |
-| CompRealVul IR | 830 | **72.1%** |
+| Juliet source (cleaned) | 124 | 7.5% |
+| Juliet IR | 680 | **69.6%** |
+| CompRealVul source (cleaned) | 485 | 46.0% |
+| CompRealVul IR | 766 | **68.0%** |
 
-This table goes in the paper — it motivates the two-detector design and H4.
+This table goes in the paper — it motivates the two-detector design and H4. (Cleaning shrank source inputs — comments/strings removed — so the truncation gap between source and IR *widened*: source mostly fits, IR mostly doesn't.)
 
 ## 4. What we build — tiered plan (external review, 2026-07-10: "good plan, slightly ambitious — shrink the MVP")
 
@@ -123,7 +123,7 @@ The full grid if everything lands:
 | E1 | Home | Juliet test split | M1,M2,M5,M6 | How well did they learn the textbook? |
 | E2 | Home | CompRealVul test split | M3,M4,M7,M8 | How well did they learn real code? |
 | E3 | **Away** (zero-shot, same form) | CompRealVul test split | M1,M2,M5,M6 | Textbook→real transfer per form |
-| E4 | **AI-style** | LLM-rewritten Juliet test split (source + compiled IR) | all 8 | Same bugs, new style only: still found? |
+| E4 | **AI-style** | LLM-rewritten Juliet test split (source + compiled IR) | all 8 | Same bugs, new style only: still found? **Headline = Juliet-trained models (M1/M2/M5/M6)** — for them it is a pure style change. For RealVul-trained models it is style + dataset shift; report as secondary cross-origin evidence only. |
 | E5 | Thread case study | Concurrency slice of E1–E4 results | (reuse) | Exploratory only — see below |
 | E6a | Truncation split (Tier 1) | E1–E3 CodeBERT results split by fits/doesn't-fit 512 | (reuse) | H4, partial |
 | E6b | Window comparison (Tier 3) | CodeBERT vs. ModernBERT on identical cells | (reuse) | H4, full |
@@ -132,12 +132,13 @@ Metrics: F1 (primary — fair under class imbalance), plus Accuracy, Precision, 
 
 **E5 demoted to case study (decision 2026-07-10):** samples are few (~126 Juliet thread bugs; 294 labeled CWE-362 in CompRealVul). Report as one exploratory paragraph with wide error bars, no strong claims; cut entirely if error bars are embarrassing. Not a headline research question.
 
-## 6. Mandatory data cleaning (before ANY training — first code task)
+## 6. Mandatory data cleaning — IMPLEMENTED (branch `Art`, 2026-07-10)
 
-Not yet implemented in `src/data_loader.py` (checked 2026-07-10):
-1. **Strip all comments** from source code — Juliet contains `/* POTENTIAL FLAW */` giveaways; a model can read the answer sheet. Apply to training AND test, both datasets (if training keeps comments, models learn comment-crutches and every exam mismeasures).
-2. **Normalize function/identifier names** — Juliet names contain the label (`..._badSink`). Match the blinding the IR dataset already has (`@FUNC`).
-3. A grader who finds un-stripped leakage can dismiss the whole result — this is credibility-critical.
+`clean_source()` in `src/data_loader.py`, applied to training AND test, both datasets:
+1. **Comments and string contents removed** via a single-pass C lexer (state machine) — handles interactions correctly (`"http://x"` is a string, not a comment; `/* "x" */` is a comment, not a string). A naive regex order damaged 76 real-world rows with `//` inside strings — fixed after external review.
+2. **Function renamed to `func`** everywhere (both datasets). **Juliet-only:** artifact identifiers renamed (`CWE*`, anything containing Bad/Good, e.g. `intBadSink`). Real-world natural words like `#define BAD 255` are kept — cleaning removes *dataset-construction artifacts*, not natural content (state this distinction in Methodology).
+3. **Verified: 0 leaks across all 15,311 Juliet + 17,063 RealVul samples**; no empty samples; label balance intact (Juliet 9,480/5,831; RealVul 9,878/7,185).
+4. A grader who finds un-stripped leakage can dismiss the whole result — this was credibility-critical.
 
 ## 7. The AI-style exam: how we create it with Qwen
 
@@ -159,7 +160,7 @@ Rationale vs. prior work: augmentation papers rewrite *training* data to make mo
 | # | We predict... | Because... | Either outcome publishable |
 |:---:|---|---|---|
 | H1 | IR models win Away (E3) and AI (E4) exams | Compiler already deleted style; style change can't hurt | If false: "compiler cleaning doesn't buy robustness" |
-| H2 | Source models win Home exams (E1,E2) | Names are useful hints on familiar data | If false: IR better everywhere — stronger result |
+| H2 | Source models win Home exams (E1,E2) | Source keeps developer-level structure and familiar syntax close to the models' pre-training, and it is shorter (less truncation); IR is longer and often cut. (NOT "name hints" — name leakage was removed in cleaning.) | If false: IR better everywhere — stronger result |
 | H4 | The 512 cut-off distorts IR results | 74% of IR inputs truncated | If false: prior 512-token conclusions are robust |
 
 (H3, thread bugs, demoted to exploratory case study E5.)
