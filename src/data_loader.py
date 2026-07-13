@@ -82,7 +82,8 @@ def extract_function_body(code_str, func_name):
     Extracts the function body of `func_name` from C source code `code_str`
     using curly-brace matching.
     """
-    # Pattern to match function declaration and the opening brace
+    # Try C++-style first (allow `const` after the parameter list), then fall
+    # back to plain C. Juliet is C but a few testcases compile as C++.
     pattern = re.escape(func_name) + r'\s*\([^)]*\)\s*(?:const\s*)?\{'
     match = re.search(pattern, code_str)
     if not match:
