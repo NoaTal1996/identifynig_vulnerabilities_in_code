@@ -5,8 +5,8 @@
 # E3 = away exam for M1/M2 (zero-shot on CompRealVul, same form)
 #
 # Usage:
-#   ./run_experiment.sh              # full run
-#   ./run_experiment.sh toy          # tiny sanity-check run
+#   ./run_experiment.sh              # full run   (~1-2 h on a Kaggle T4 GPU)
+#   ./run_experiment.sh toy          # tiny sanity-check run (~3 min, CPU/MPS ok)
 #
 set -e
 
