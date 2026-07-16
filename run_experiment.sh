@@ -102,7 +102,7 @@ compare () {
     --a "$a" --b "$b" \
     --label_a "$label_a" --label_b "$label_b" \
     --output_file "$outfile" \
-    $extra
+    $extra || echo "Compare failed (non-fatal): $label_a vs $label_b"
 }
 
 # ---- Train the 4 models (E1 & E2 are computed at the end of each training run) ----

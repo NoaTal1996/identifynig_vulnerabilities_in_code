@@ -68,14 +68,26 @@ def match_pairs(a_rows, b_rows):
         return all(r.get("sample_id") for r in rows)
 
     if has_all_ids(a_rows) and has_all_ids(b_rows):
-        by_id_a = {r["sample_id"]: r for r in a_rows}
-        by_id_b = {r["sample_id"]: r for r in b_rows}
-        common_ids = sorted(set(by_id_a) & set(by_id_b))
-        if not common_ids:
-            raise ValueError("No sample_ids overlap between the two files.")
-        a = [by_id_a[i] for i in common_ids]
-        b = [by_id_b[i] for i in common_ids]
-        mode = f"sample_id (n_common={len(common_ids)}, dropped_a={len(a_rows)-len(common_ids)}, dropped_b={len(b_rows)-len(common_ids)})"
+        # Match on (sample_id, label) — sample_id alone is not always unique
+        # (CompRealVul reuses fun_name across good/bad examples). Grouping by
+        # the label as well breaks the ambiguity without changing the test set.
+        def key(r):
+            return (r["sample_id"], int(r["label"]))
+
+        by_key_a = {}
+        by_key_b = {}
+        for r in a_rows:
+            by_key_a.setdefault(key(r), r)  # first occurrence wins
+        for r in b_rows:
+            by_key_b.setdefault(key(r), r)
+        common_keys = sorted(set(by_key_a) & set(by_key_b))
+        if not common_keys:
+            raise ValueError("No (sample_id, label) pairs overlap between the two files.")
+        a = [by_key_a[k] for k in common_keys]
+        b = [by_key_b[k] for k in common_keys]
+        mode = (f"sample_id+label (n_common={len(common_keys)}, "
+                f"dropped_a={len(a_rows)-len(common_keys)}, "
+                f"dropped_b={len(b_rows)-len(common_keys)})")
     else:
         if len(a_rows) != len(b_rows):
             raise ValueError(
