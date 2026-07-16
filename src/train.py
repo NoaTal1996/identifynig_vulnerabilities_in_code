@@ -11,6 +11,7 @@ from transformers import (
     DataCollatorWithPadding
 )
 from data_loader import get_dataset
+from eval import _metrics_from_arrays, bootstrap_metrics
 
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
@@ -51,6 +52,8 @@ def main():
     parser.add_argument("--max_length", type=int, default=512, help="Max sequence length for tokenization")
     parser.add_argument("--toy", action="store_true", help="Use a tiny subset of the dataset for testing")
     parser.add_argument("--output_dir", type=str, default="./results", help="Directory to save checkpoints and metrics")
+    parser.add_argument("--n_boot", type=int, default=1000, help="Bootstrap resamples for 95%% CIs on the test-set metrics (0 to disable)")
+    parser.add_argument("--boot_seed", type=int, default=42, help="Bootstrap RNG seed")
     args = parser.parse_args()
     
     print(f"=== Starting Training Pipeline ===")
@@ -125,22 +128,59 @@ def main():
     print(f"Saved best model and tokenizer to {run_output_dir}")
 
 
-    # 8. Evaluate on test set
+    # 8. Evaluate on test set (predict → per-example predictions → point + bootstrap CI)
     print("Evaluating model on test set...")
-    test_results = trainer.evaluate(tokenized_datasets['test'])
-    print(f"\n=== Test Results for {run_name} ===")
-    print(f"Accuracy:  {test_results['eval_accuracy']:.4f}")
-    print(f"F1-Score:  {test_results['eval_f1']:.4f}")
-    print(f"Precision: {test_results['eval_precision']:.4f}")
-    print(f"Recall:    {test_results['eval_recall']:.4f}")
-    print(f"ROC-AUC:   {test_results['eval_auc']:.4f}")
-    
-    # Save test results to a file
+    predictions_out = trainer.predict(tokenized_datasets['test'])
+    logits = predictions_out.predictions
+    y_true = predictions_out.label_ids
+    y_pred = np.argmax(logits, axis=-1)
+    shifted = logits - np.max(logits, axis=-1, keepdims=True)
+    exp = np.exp(shifted)
+    probs = exp / np.sum(exp, axis=-1, keepdims=True)
+    y_prob = probs[:, 1]
+
+    point = _metrics_from_arrays(y_true, y_pred, y_prob)
+    print(f"\n=== Test Results for {run_name} (point estimates) ===")
+    print(f"Accuracy:  {point['accuracy']:.4f}")
+    print(f"F1-Score:  {point['f1']:.4f}")
+    print(f"Precision: {point['precision']:.4f}")
+    print(f"Recall:    {point['recall']:.4f}")
+    print(f"ROC-AUC:   {point['auc']:.4f}")
+
+    ci = None
+    if args.n_boot > 0:
+        print(f"\nBootstrapping 95% CIs (n_boot={args.n_boot})...")
+        ci = bootstrap_metrics(y_true, y_pred, y_prob, n_boot=args.n_boot, seed=args.boot_seed)
+        for k in ["accuracy", "f1", "precision", "recall", "auc"]:
+            lo, hi = ci[k]["ci_low"], ci[k]["ci_high"]
+            print(f"  {k:<9} {point[k]:.4f}  [{lo:.4f}, {hi:.4f}]")
+
     os.makedirs(args.output_dir, exist_ok=True)
     results_path = os.path.join(args.output_dir, f"{run_name}_metrics.json")
     with open(results_path, "w") as f:
-        json.dump(test_results, f, indent=4)
+        json.dump({
+            "run_name": run_name,
+            "dataset": args.dataset,
+            "rep": args.rep,
+            "n_samples": int(len(y_true)),
+            "point_estimates": point,
+            "bootstrap_ci_95": ci,
+            "n_boot": int(args.n_boot),
+            "boot_seed": int(args.boot_seed),
+        }, f, indent=4)
     print(f"Saved final metrics to {results_path}")
+
+    pred_path = os.path.join(args.output_dir, f"{run_name}_predictions.jsonl")
+    with open(pred_path, "w") as f:
+        for i, (yt, yp, pr) in enumerate(zip(y_true, y_pred, y_prob)):
+            f.write(json.dumps({
+                "idx": i,
+                "sample_id": "",
+                "label": int(yt),
+                "pred": int(yp),
+                "prob_class1": float(pr),
+            }) + "\n")
+    print(f"Saved per-example predictions to {pred_path}")
 
 if __name__ == "__main__":
     main()
