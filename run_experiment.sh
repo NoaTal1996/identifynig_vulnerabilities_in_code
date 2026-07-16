@@ -1,10 +1,10 @@
 #!/bin/bash
-# End-to-end experiment: Tier 1 (M1-M4, exams E1/E2/E3) + E4 (LLM restyle).
-# E1  = home exam for M1/M2 (test on Juliet)      -> produced automatically by train.py
-# E2  = home exam for M3/M4 (test on CompRealVul) -> produced automatically by train.py
-# E3  = away exam for M1/M2 (zero-shot on CompRealVul, same form)
-# E4a = M1 (Juliet-source)      on LLM-restyled Juliet-source test set
-# E4b = M3 (CompRealVul-source) on LLM-restyled CompRealVul-source test set
+# End-to-end experiment (E1-E5).
+# E1 = home exam for M1/M2 (test on Juliet)      -> produced automatically by train.py
+# E2 = home exam for M3/M4 (test on CompRealVul) -> produced automatically by train.py
+# E3 = away exam for M1/M2 (zero-shot on CompRealVul, same form)
+# E4 = LLM-Juliet       (source), tested on both source models M1 and M3
+# E5 = LLM-CompRealVul  (source), tested on both source models M1 and M3
 #
 # Usage:
 #   ./run_experiment.sh              # full run   (~1-2 h on a Kaggle T4 GPU)
@@ -96,30 +96,38 @@ eval_transfer "$OUT/juliet_source$SUFFIX"  realvul source \
 eval_transfer "$OUT/juliet_llvm_ir$SUFFIX" realvul llvm_ir \
               "$OUT/E3_M2_juliet_llvm_to_realvul${SUFFIX}.json"
 
-# ---- E4: LLM-restyled source, tested on the same-form model that trained on the ----
-# ---- original of that dataset. Files are pre-generated with Qwen (see data_llm/). ----
+# ---- E4/E5: LLM-restyled source, tested on the source-trained models (M1 and M3). ----
+# ---- IR models (M2, M4) are not tested here — LLM restyling only produces source,   ----
+# ---- and there is no IR of the restyled code (see handoff). Files pre-generated     ----
+# ---- with Qwen; see data_llm/.                                                       ----
 LLM_JULIET=./data_llm/llm_rewritten_juliet_source_200_repaired_balanced.jsonl
 LLM_REALVUL=./data_llm/llm_rewritten_realvul_source_200_repaired_balanced.jsonl
 
+# E4: LLM-Juliet, tested on both source models (M1 and M3).
 if [ -f "$LLM_JULIET" ]; then
-  eval_on_jsonl "$OUT/juliet_source$SUFFIX"  "$LLM_JULIET"  \
-                "$OUT/E4a_M1_on_llm_juliet_source${SUFFIX}.json"
+  eval_on_jsonl "$OUT/juliet_source$SUFFIX"  "$LLM_JULIET" \
+                "$OUT/E4_M1_on_llm_juliet_source${SUFFIX}.json"
+  eval_on_jsonl "$OUT/realvul_source$SUFFIX" "$LLM_JULIET" \
+                "$OUT/E4_M3_on_llm_juliet_source${SUFFIX}.json"
 else
-  echo "Skipping E4a: $LLM_JULIET not found."
+  echo "Skipping E4: $LLM_JULIET not found."
 fi
 
+# E5: LLM-CompRealVul, tested on both source models (M1 and M3).
 if [ -f "$LLM_REALVUL" ]; then
+  eval_on_jsonl "$OUT/juliet_source$SUFFIX"  "$LLM_REALVUL" \
+                "$OUT/E5_M1_on_llm_realvul_source${SUFFIX}.json"
   eval_on_jsonl "$OUT/realvul_source$SUFFIX" "$LLM_REALVUL" \
-                "$OUT/E4b_M3_on_llm_realvul_source${SUFFIX}.json"
+                "$OUT/E5_M3_on_llm_realvul_source${SUFFIX}.json"
 else
-  echo "Skipping E4b: $LLM_REALVUL not found."
+  echo "Skipping E5: $LLM_REALVUL not found."
 fi
 
 echo -e "\n=============================================="
 echo "Done. Results in $OUT/"
-echo "  E1  (M1/M2 on Juliet test)              -> juliet_{source,llvm_ir}${SUFFIX}_metrics.json"
-echo "  E2  (M3/M4 on CompRealVul test)         -> realvul_{source,llvm_ir}${SUFFIX}_metrics.json"
-echo "  E3  (M1/M2 zero-shot -> CompRealVul)    -> E3_*.json"
-echo "  E4a (M1 on LLM-restyled Juliet)         -> E4a_*.json"
-echo "  E4b (M3 on LLM-restyled CompRealVul)    -> E4b_*.json"
+echo "  E1 (M1/M2 on Juliet test)            -> juliet_{source,llvm_ir}${SUFFIX}_metrics.json"
+echo "  E2 (M3/M4 on CompRealVul test)       -> realvul_{source,llvm_ir}${SUFFIX}_metrics.json"
+echo "  E3 (M1/M2 zero-shot -> CompRealVul)  -> E3_*.json"
+echo "  E4 (M1/M3 on LLM-Juliet)             -> E4_*.json"
+echo "  E5 (M1/M3 on LLM-CompRealVul)        -> E5_*.json"
 echo "=============================================="
