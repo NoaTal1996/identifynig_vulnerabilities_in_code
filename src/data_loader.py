@@ -227,15 +227,19 @@ def get_dataset(dataset_name, representation, toy=False):
     else:
         raise ValueError(f"Unknown dataset_name: {dataset_name}")
         
-    # Map raw text features to standard Hugging Face format
+    # Map raw text features to standard Hugging Face format.
+    # Also propagate a stable per-row `sample_id` so eval-time paired
+    # comparisons (McNemar / paired bootstrap) can match rows across runs.
     text_col = 'source_code' if representation.lower() == 'source' else 'llvm_ir'
-    
+    id_col = 'file' if dataset_name.lower() == 'juliet' else 'fun_name'
+
     def format_row(examples):
         return {
             'text': examples[text_col],
-            'label': examples['label']
+            'label': examples['label'],
+            'sample_id': examples[id_col],
         }
-        
+
     formatted = {}
     for split in ['train', 'validation', 'test']:
         formatted[split] = aligned[split].map(

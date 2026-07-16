@@ -171,11 +171,12 @@ def main():
     print(f"Saved final metrics to {results_path}")
 
     pred_path = os.path.join(args.output_dir, f"{run_name}_predictions.jsonl")
+    sample_ids = tokenized_datasets['test']["sample_id"] if "sample_id" in tokenized_datasets['test'].column_names else [""] * len(y_true)
     with open(pred_path, "w") as f:
-        for i, (yt, yp, pr) in enumerate(zip(y_true, y_pred, y_prob)):
+        for i, (yt, yp, pr, sid) in enumerate(zip(y_true, y_pred, y_prob, sample_ids)):
             f.write(json.dumps({
                 "idx": i,
-                "sample_id": "",
+                "sample_id": sid,
                 "label": int(yt),
                 "pred": int(yp),
                 "prob_class1": float(pr),
