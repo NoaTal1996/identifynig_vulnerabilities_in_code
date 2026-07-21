@@ -2,16 +2,59 @@ import argparse
 import os
 import json
 import numpy as np
+import torch
+import torch.nn as nn
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
 from transformers import (
-    AutoTokenizer, 
-    AutoModelForSequenceClassification, 
-    TrainingArguments, 
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    TrainingArguments,
     Trainer,
     DataCollatorWithPadding
 )
 from data_loader import get_dataset
 from eval import _metrics_from_arrays, bootstrap_metrics
+
+
+class WeightedTrainer(Trainer):
+    """Trainer that uses a class-weighted cross-entropy loss.
+
+    The default Trainer applies unweighted CE, which lets the model collapse
+    to always-predict-majority on skewed datasets (see M3/M4 on CompRealVul).
+    We inject inverse-frequency weights so the minority class contributes
+    proportionally more to the gradient.
+    """
+
+    def __init__(self, class_weights=None, **kwargs):
+        super().__init__(**kwargs)
+        self.class_weights = class_weights
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits
+        if self.class_weights is not None:
+            weight = self.class_weights.to(logits.device)
+        else:
+            weight = None
+        loss_fct = nn.CrossEntropyLoss(weight=weight)
+        loss = loss_fct(logits.view(-1, model.config.num_labels), labels.view(-1))
+        return (loss, outputs) if return_outputs else loss
+
+
+def compute_class_weights(labels, num_classes=2):
+    """Inverse-frequency class weights (sklearn 'balanced' recipe).
+
+    weight_i = N_total / (num_classes * count_i)
+    """
+    labels = np.asarray(labels)
+    n_total = len(labels)
+    weights = np.ones(num_classes, dtype=np.float32)
+    for c in range(num_classes):
+        count = int((labels == c).sum())
+        if count > 0:
+            weights[c] = n_total / (num_classes * count)
+    return weights
 
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
@@ -54,6 +97,8 @@ def main():
     parser.add_argument("--output_dir", type=str, default="./results", help="Directory to save checkpoints and metrics")
     parser.add_argument("--n_boot", type=int, default=1000, help="Bootstrap resamples for 95%% CIs on the test-set metrics (0 to disable)")
     parser.add_argument("--boot_seed", type=int, default=42, help="Bootstrap RNG seed")
+    parser.add_argument("--use_class_weights", type=lambda x: x.lower() in {"1", "true", "yes"}, default=True,
+                        help="Use inverse-frequency class weights in the loss (default True). Set to False for the unweighted baseline.")
     args = parser.parse_args()
     
     print(f"=== Starting Training Pipeline ===")
@@ -105,8 +150,21 @@ def main():
         disable_tqdm=False
     )
     
-    # 6. Initialize Trainer
-    trainer = Trainer(
+    # 6. Compute class weights from the training labels (inverse frequency).
+    class_weights_tensor = None
+    if args.use_class_weights:
+        train_labels = tokenized_datasets['train']['label']
+        w = compute_class_weights(train_labels, num_classes=2)
+        class_weights_tensor = torch.tensor(w, dtype=torch.float32)
+        c0 = int(np.sum(np.asarray(train_labels) == 0))
+        c1 = int(np.sum(np.asarray(train_labels) == 1))
+        print(f"Class balance in train: label 0 = {c0}, label 1 = {c1} (ratio {c0/max(c1,1):.2f}:1)")
+        print(f"Using class weights: [{w[0]:.4f}, {w[1]:.4f}]")
+    else:
+        print("Class weights disabled (unweighted baseline).")
+
+    # 7. Initialize Trainer (weighted if class_weights_tensor is set)
+    trainer_kwargs = dict(
         model=model,
         args=training_args,
         train_dataset=tokenized_datasets['train'],
@@ -115,6 +173,7 @@ def main():
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
         compute_metrics=compute_metrics,
     )
+    trainer = WeightedTrainer(class_weights=class_weights_tensor, **trainer_kwargs)
     
     # 7. Train model
     print("Training model...")
@@ -167,6 +226,8 @@ def main():
             "bootstrap_ci_95": ci,
             "n_boot": int(args.n_boot),
             "boot_seed": int(args.boot_seed),
+            "use_class_weights": bool(args.use_class_weights),
+            "class_weights": (class_weights_tensor.tolist() if class_weights_tensor is not None else None),
         }, f, indent=4)
     print(f"Saved final metrics to {results_path}")
 
