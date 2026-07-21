@@ -88,11 +88,15 @@ def main():
     parser = argparse.ArgumentParser(description="Fine-tune CodeBERT for Vulnerability Detection")
     parser.add_argument("--dataset", type=str, required=True, choices=["juliet", "realvul"], help="Dataset to load")
     parser.add_argument("--rep", type=str, required=True, choices=["source", "llvm_ir"], help="Code representation")
-    parser.add_argument("--model_name", type=str, default="microsoft/codebert-base", help="Model pre-trained weights path or HF repo")
+    parser.add_argument("--model_name", type=str, default="answerdotai/ModernBERT-base",
+                        help="HF model repo. Default: ModernBERT-base (context 8192, better than CodeBERT for long IR/functions). "
+                             "Use microsoft/codebert-base for the earlier baseline.")
     parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size per device")
-    parser.add_argument("--max_length", type=int, default=512, help="Max sequence length for tokenization")
+    parser.add_argument("--batch_size", type=int, default=4,
+                        help="Batch size per device. Default 4 (fits 2048-token ModernBERT on a T4). Use 8 for CodeBERT@512.")
+    parser.add_argument("--max_length", type=int, default=2048,
+                        help="Max sequence length. Default 2048 for ModernBERT (up to 8192 supported). Use 512 for CodeBERT.")
     parser.add_argument("--toy", action="store_true", help="Use a tiny subset of the dataset for testing")
     parser.add_argument("--output_dir", type=str, default="./results", help="Directory to save checkpoints and metrics")
     parser.add_argument("--n_boot", type=int, default=1000, help="Bootstrap resamples for 95%% CIs on the test-set metrics (0 to disable)")
